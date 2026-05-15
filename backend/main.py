@@ -1,4 +1,5 @@
 from fastapi import FastAPI
+from fastapi.middleware.cors import CORSMiddleware
 from dotenv import load_dotenv
 import os
 import requests
@@ -8,6 +9,15 @@ from tavily import TavilyClient
 load_dotenv()
 
 app = FastAPI()
+app = FastAPI()
+
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=["*"],
+    allow_credentials=True,
+    allow_methods=["*"],
+    allow_headers=["*"],
+)
 
 groq_client = Groq(api_key=os.getenv("GROQ_API_KEY"))
 tavily_client = TavilyClient(api_key=os.getenv("TAVILY_API_KEY"))
