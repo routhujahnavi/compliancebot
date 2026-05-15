@@ -1,0 +1,19 @@
+AML POLICY - SECTION 4.2
+All customer transactions above $10,000 must be reported.
+Customer identity must be verified before account opening.
+Suspicious transactions must be reported within 30 days.
+
+AML POLICY - SECTION 7.1
+Data retention for customer records is 5 years.
+Employee training on AML must happen annually.
+Third party vendors must sign data protection agreements.
+
+DATA PRIVACY POLICY - SECTION 2.1
+Customer data must be encrypted at rest.
+Data breaches must be reported within 72 hours.
+Customer consent must be obtained before data sharing.
+
+LENDING POLICY - SECTION 3.1
+Interest rates must be disclosed upfront.
+Loan applications must be processed within 10 business days.
+Credit checks must follow fair lending guidelines.
