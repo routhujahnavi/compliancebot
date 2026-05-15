@@ -10,16 +10,27 @@ from groq import Groq
 from tavily import TavilyClient
 from agents.orchestrator import run_orchestrator
 from agents.monitor import run_monitor
-from database import init_db, get_db, AuditTrail, GapReport, JurisdictionConflict, CompanyPolicy
+from database import init_db, get_db, AuditTrail, GapReport, JurisdictionConflict, CompanyPolicy, ScheduleConfig, PipelineRunLog, HITLReview
 from sqlalchemy.orm import Session
 import asyncio
+from contextlib import asynccontextmanager
+from scheduler import start_scheduler, stop_scheduler, get_schedule_config, update_schedule_config
+from email_alerts import send_test_email
+from pydantic import BaseModel
+from typing import Optional
 
 load_dotenv()
 
-app = FastAPI()
+# ── Lifespan — start/stop APScheduler with the app ───────────────────
+@asynccontextmanager
+async def lifespan(app):
+    init_db()
+    start_scheduler()
+    yield
+    stop_scheduler()
 
-# Initialize database on startup
-init_db()
+app = FastAPI(lifespan=lifespan)
+
 
 app.add_middleware(
     CORSMiddleware,
@@ -334,3 +345,136 @@ def export_pdf_test():
 
     except Exception as e:
         return {"status": "error", "message": str(e)}
+
+
+# ── Schedule Management ──────────────────────────────────────────────
+
+class ScheduleUpdate(BaseModel):
+    interval_minutes: Optional[int] = None
+    enabled: Optional[bool] = None
+
+@app.get("/schedule")
+def get_schedule():
+    return get_schedule_config()
+
+@app.post("/schedule")
+def update_schedule(data: ScheduleUpdate):
+    result = update_schedule_config(
+        interval_minutes=data.interval_minutes,
+        enabled=data.enabled
+    )
+    return result
+
+# ── Pipeline Run History ─────────────────────────────────────────────
+@app.get("/pipeline-runs")
+def get_pipeline_runs(limit: int = 20, db: Session = Depends(get_db)):
+    entries = db.query(PipelineRunLog).order_by(PipelineRunLog.started_at.desc()).limit(limit).all()
+    return [
+        {
+            "id": e.id,
+            "pipeline_run_id": e.pipeline_run_id,
+            "trigger": e.trigger,
+            "status": e.status,
+            "documents_processed": e.documents_processed,
+            "gaps_found": e.gaps_found,
+            "conflicts_found": e.conflicts_found,
+            "error_message": e.error_message,
+            "started_at": e.started_at.isoformat() if e.started_at else None,
+            "completed_at": e.completed_at.isoformat() if e.completed_at else None,
+        }
+        for e in entries
+    ]
+
+# ── Test Email ───────────────────────────────────────────────────────
+@app.post("/send-test-email")
+def send_test_email_endpoint():
+    try:
+        success = send_test_email()
+        if success:
+            return {"status": "success", "message": "Test email sent successfully"}
+        else:
+            return {"status": "error", "message": "Email not configured — check EMAIL_FROM, EMAIL_PASSWORD, and EMAIL_RECIPIENTS in .env"}
+    except Exception as e:
+        return {"status": "error", "message": str(e)}
+
+# ── HITL Reviews ─────────────────────────────────────────────────────
+@app.get("/hitl-reviews")
+def get_hitl_reviews(db: Session = Depends(get_db)):
+    entries = db.query(HITLReview).order_by(HITLReview.created_at.desc()).all()
+    return [
+        {
+            "id": e.id,
+            "gap_report_id": e.gap_report_id,
+            "policy_name": e.policy_name,
+            "policy_section": e.policy_section,
+            "gap_description": e.gap_description,
+            "confidence_score": e.confidence_score,
+            "regulation_title": e.regulation_title,
+            "jurisdiction": e.jurisdiction,
+            "status": e.status,
+            "rewritten_content": e.rewritten_content,
+            "created_at": e.created_at.isoformat() if e.created_at else None,
+            "resolved_at": e.resolved_at.isoformat() if e.resolved_at else None,
+        }
+        for e in entries
+    ]
+
+@app.post("/hitl-reviews/{review_id}/approve")
+def approve_hitl_review(review_id: int, db: Session = Depends(get_db)):
+    review = db.query(HITLReview).filter(HITLReview.id == review_id).first()
+    if not review:
+        return {"status": "error", "message": "Review not found"}
+    if review.status != "pending":
+        return {"status": "error", "message": f"Review already {review.status}"}
+
+    # Use Groq LLM to rewrite the policy
+    try:
+        prompt = f"""You are a compliance policy writer. Rewrite and improve the following policy section to address the identified compliance gap.
+
+Policy Section: {review.policy_section}
+Gap Identified: {review.gap_description}
+Regulation: {review.regulation_title}
+Jurisdiction: {review.jurisdiction}
+Confidence Score: {review.confidence_score}
+
+Write a clear, professional, and comprehensive policy that fully addresses the gap.
+Include specific requirements, timelines, and compliance measures.
+Keep the language formal and suitable for an official company policy document."""
+
+        response = groq_client.chat.completions.create(
+            model="llama-3.3-70b-versatile",
+            messages=[
+                {"role": "system", "content": "You are an expert compliance policy writer. Write clear, actionable policy language."},
+                {"role": "user", "content": prompt}
+            ],
+            temperature=0.3
+        )
+        rewritten = response.choices[0].message.content
+
+        review.status = "rewritten"
+        review.rewritten_content = rewritten
+        review.resolved_at = __import__('datetime').datetime.utcnow()
+        db.commit()
+
+        print(f"  ✅ HITL review {review_id} approved and rewritten")
+        return {
+            "status": "success",
+            "review_id": review_id,
+            "rewritten_content": rewritten
+        }
+    except Exception as e:
+        return {"status": "error", "message": str(e)}
+
+@app.post("/hitl-reviews/{review_id}/dismiss")
+def dismiss_hitl_review(review_id: int, db: Session = Depends(get_db)):
+    review = db.query(HITLReview).filter(HITLReview.id == review_id).first()
+    if not review:
+        return {"status": "error", "message": "Review not found"}
+    if review.status != "pending":
+        return {"status": "error", "message": f"Review already {review.status}"}
+
+    review.status = "dismissed"
+    review.resolved_at = __import__('datetime').datetime.utcnow()
+    db.commit()
+    print(f"  ❌ HITL review {review_id} dismissed")
+    return {"status": "success", "review_id": review_id}

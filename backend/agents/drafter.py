@@ -7,7 +7,8 @@ sys.path.insert(0, os.path.dirname(os.path.dirname(__file__)))
 from groq import Groq
 from docx import Document
 from dotenv import load_dotenv
-from database import SessionLocal, GapReport, CompanyPolicy, AuditTrail
+from database import SessionLocal, GapReport, CompanyPolicy, AuditTrail, HITLReview
+from email_alerts import send_gap_alert_email, send_hitl_review_email
 from datetime import datetime
 
 load_dotenv()
@@ -56,6 +57,45 @@ def save_gaps_to_db(gap_data: dict, jira_key: str, doc_path: str):
             ))
         db.commit()
         print(f"  ✅ {len(gap_data.get('gaps', []))} gaps saved to database")
+    finally:
+        db.close()
+
+def create_hitl_reviews(gap_data: dict):
+    """Create HITL review entries for gaps with confidence < 0.7."""
+    db = SessionLocal()
+    try:
+        regulation_title = gap_data.get("regulation_title", "")
+        jurisdiction = gap_data.get("jurisdiction", "")
+        count = 0
+        for gap in gap_data.get("gaps", []):
+            score = gap.get("confidence_score", 1.0)
+            if score < 0.7:
+                review = HITLReview(
+                    policy_name=gap.get("policy_section", "Unknown Policy"),
+                    policy_section=gap.get("policy_section", ""),
+                    gap_description=gap.get("gap", ""),
+                    confidence_score=score,
+                    regulation_title=regulation_title,
+                    jurisdiction=jurisdiction,
+                    status="pending"
+                )
+                db.add(review)
+                db.flush()  # get the ID before commit
+                count += 1
+                # Send HITL email notification
+                try:
+                    send_hitl_review_email(
+                        review_id=review.id,
+                        policy_name=review.policy_name,
+                        confidence_score=score,
+                        gap_description=review.gap_description,
+                        regulation_title=regulation_title
+                    )
+                except Exception as e:
+                    print(f"  ⚠️  HITL email failed: {e}")
+        db.commit()
+        if count:
+            print(f"  🔍 {count} HITL review(s) created for low-confidence gaps")
     finally:
         db.close()
 
@@ -236,9 +276,22 @@ Be specific, use compliance terminology."""
     # Send Slack
     send_slack(regulation_title, len(gaps), jira_key, deadline, days_remaining, requires_human_review)
 
+    # Send Email Alert
+    try:
+        send_gap_alert_email(gap_data, jira_key)
+        print("  📧 Email alert sent")
+    except Exception as e:
+        print(f"  ⚠️  Email alert failed (non-fatal): {e}")
+
     # Save gap reports to DB
     gap_data["enforcement_context"] = enforcement_context
     save_gaps_to_db(gap_data, jira_key or "", doc_path)
+
+    # Create HITL reviews for low-confidence gaps
+    try:
+        create_hitl_reviews(gap_data)
+    except Exception as e:
+        print(f"  ⚠️  HITL review creation failed (non-fatal): {e}")
 
     log_audit(pipeline_run_id, "drafted_outputs", f"Doc: {doc_path}, Jira: {jira_key}", regulation_title=regulation_title)
 

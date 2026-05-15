@@ -87,6 +87,50 @@ class AuditTrail(Base):
     timestamp = Column(DateTime, default=datetime.utcnow)
     regulation_title = Column(String)
 
+# Table 6: Schedule Configuration
+class ScheduleConfig(Base):
+    __tablename__ = "schedule_config"
+
+    id = Column(Integer, primary_key=True, index=True)
+    interval_minutes = Column(Integer, default=60)
+    enabled = Column(Boolean, default=False)
+    last_run_at = Column(DateTime, nullable=True)
+    next_run_at = Column(DateTime, nullable=True)
+    created_at = Column(DateTime, default=datetime.utcnow)
+    updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
+
+# Table 7: Pipeline Run Logs
+class PipelineRunLog(Base):
+    __tablename__ = "pipeline_run_logs"
+
+    id = Column(Integer, primary_key=True, index=True)
+    pipeline_run_id = Column(String)
+    trigger = Column(String, default="manual")  # "manual" or "scheduled"
+    status = Column(String, default="running")   # "running", "complete", "error"
+    documents_processed = Column(Integer, default=0)
+    gaps_found = Column(Integer, default=0)
+    conflicts_found = Column(Integer, default=0)
+    error_message = Column(Text, nullable=True)
+    started_at = Column(DateTime, default=datetime.utcnow)
+    completed_at = Column(DateTime, nullable=True)
+
+# Table 8: Human-in-the-Loop Reviews
+class HITLReview(Base):
+    __tablename__ = "hitl_reviews"
+
+    id = Column(Integer, primary_key=True, index=True)
+    gap_report_id = Column(Integer, nullable=True)
+    policy_name = Column(String, nullable=False)
+    policy_section = Column(String)
+    gap_description = Column(Text)
+    confidence_score = Column(Float)
+    regulation_title = Column(String)
+    jurisdiction = Column(String)
+    status = Column(String, default="pending")  # pending, approved, dismissed, rewritten
+    rewritten_content = Column(Text, nullable=True)
+    created_at = Column(DateTime, default=datetime.utcnow)
+    resolved_at = Column(DateTime, nullable=True)
+
 def init_db():
     Base.metadata.create_all(bind=engine)
     print("✅ Database initialized")
