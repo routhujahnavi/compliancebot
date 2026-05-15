@@ -70,10 +70,12 @@ def update_policy_in_db(gap: dict, suggested_content: str):
             policy.content = suggested_content
             policy.last_updated = datetime.utcnow()
             policy.updated_by = "ComplianceBot Agent"
-            old_version = policy.version
+            old_version = str(policy.version)
             parts = old_version.split(".")
-            policy.version = f"{parts[0]}.{int(parts[1]) + 1}"
-            db.commit()
+            if len(parts) >= 2:
+                policy.version = parts[0] + "." + str(int(parts[1]) + 1)
+            else:
+                policy.version = parts[0] + ".1"
             print(f"  📝 Policy updated in DB: {policy.title} → v{policy.version}")
     finally:
         db.close()
