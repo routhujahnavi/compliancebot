@@ -1,241 +1,289 @@
-import { useState } from "react";
+import { useState, useEffect } from "react";
 
-const BACKEND = "http://192.168.137.155:8000";
+const BACKEND = "http://localhost:8000";
 
-const agents = [
-  { id: 1, name: "Monitor", icon: "🔍", desc: "Watches regulatory sources" },
-  { id: 2, name: "Interpreter", icon: "📖", desc: "Extracts obligations from laws" },
-  { id: 3, name: "Comparator", icon: "⚖️", desc: "Finds gaps in your SOPs" },
-  { id: 4, name: "Drafter", icon: "✍️", desc: "Writes SOP updates + Jira + Slack" },
-  { id: 5, name: "Orchestrator", icon: "🤖", desc: "Manages all agents" },
-];
+const AGENTS = ["Monitor", "Interpreter", "Comparator", "ConflictDetector", "Drafter", "Orchestrator"];
 
 export default function App() {
   const [activeTab, setActiveTab] = useState("dashboard");
-  const [topic, setTopic] = useState("");
-  const [analysis, setAnalysis] = useState("");
-  const [loadingAnalysis, setLoadingAnalysis] = useState(false);
-  const [pipelineStatus, setPipelineStatus] = useState(null);
-  const [loadingPipeline, setLoadingPipeline] = useState(false);
-  const [agentStates, setAgentStates] = useState({1:"idle",2:"idle",3:"idle",4:"idle",5:"idle"});
+  const [running, setRunning] = useState(false);
   const [logs, setLogs] = useState([]);
+  const [lastResult, setLastResult] = useState(null);
+  const [agentStatus, setAgentStatus] = useState({});
+  const [auditTrail, setAuditTrail] = useState([]);
+  const [gapReports, setGapReports] = useState([]);
+  const [conflicts, setConflicts] = useState([]);
+  const [policies, setPolicies] = useState([]);
 
-  const addLog = (msg) => setLogs(prev => [`[${new Date().toLocaleTimeString()}] ${msg}`, ...prev.slice(0, 19)]);
-
-  const checkCompliance = async () => {
-    if (!topic) return;
-    setLoadingAnalysis(true);
-    setAnalysis("");
-    try {
-      const res = await fetch(`${BACKEND}/check-compliance?topic=${encodeURIComponent(topic)}`, { method: "POST" });
-      const data = await res.json();
-      setAnalysis(data.analysis);
-      addLog(`✅ Compliance analysis done for: ${topic}`);
-    } catch {
-      setAnalysis("Error connecting to backend.");
-      addLog("❌ Backend connection failed");
-    }
-    setLoadingAnalysis(false);
+  const addLog = (msg, type = "info") => {
+    setLogs(prev => [...prev, { msg, type, time: new Date().toLocaleTimeString() }]);
   };
 
+  const fetchData = async () => {
+    try {
+      const [at, gr, cf, po] = await Promise.all([
+        fetch(`${BACKEND}/audit-trail`).then(r => r.json()),
+        fetch(`${BACKEND}/gap-reports`).then(r => r.json()),
+        fetch(`${BACKEND}/conflicts`).then(r => r.json()),
+        fetch(`${BACKEND}/policies`).then(r => r.json()),
+      ]);
+      setAuditTrail(at);
+      setGapReports(gr);
+      setConflicts(cf);
+      setPolicies(po);
+    } catch (e) {
+      console.error("Fetch error:", e);
+    }
+  };
+
+  useEffect(() => { fetchData(); }, []);
+
   const runPipeline = async () => {
-    setLoadingPipeline(true);
-    setPipelineStatus(null);
-    setAgentStates({1:"idle",2:"idle",3:"idle",4:"idle",5:"idle"});
+    setRunning(true);
     setLogs([]);
+    setAgentStatus({});
+    addLog("🚀 Starting pipeline...", "info");
 
-    addLog("🤖 Orchestrator starting pipeline...");
-    setAgentStates(s => ({...s, 5:"running"}));
-    await sleep(500);
+    const agentSequence = [
+      { name: "Monitor", delay: 500 },
+      { name: "Interpreter", delay: 1500 },
+      { name: "Comparator", delay: 3000 },
+      { name: "ConflictDetector", delay: 4500 },
+      { name: "Drafter", delay: 6000 },
+      { name: "Orchestrator", delay: 7500 },
+    ];
 
-    addLog("🔍 Agent 1: Monitor scanning RSS feeds...");
-    setAgentStates(s => ({...s, 1:"running"}));
-    await sleep(1000);
-    setAgentStates(s => ({...s, 1:"done"}));
-    addLog("✅ Monitor: test document loaded");
-
-    addLog("📖 Agent 2: Interpreter extracting obligations...");
-    setAgentStates(s => ({...s, 2:"running"}));
-    await sleep(1000);
+    agentSequence.forEach(({ name, delay }) => {
+      setTimeout(() => {
+        setAgentStatus(prev => ({ ...prev, [name]: "running" }));
+        addLog(`⚙️  ${name} agent running...`, "info");
+      }, delay);
+    });
 
     try {
       const res = await fetch(`${BACKEND}/run-pipeline-test`, { method: "POST" });
       const data = await res.json();
 
-      setAgentStates(s => ({...s, 2:"done"}));
-      addLog(`✅ Interpreter: ${data.obligations_found} obligations found`);
+      AGENTS.forEach(name => setAgentStatus(prev => ({ ...prev, [name]: "done" })));
 
-      setAgentStates(s => ({...s, 3:"running"}));
-      addLog("⚖️  Agent 3: Comparator finding gaps...");
-      await sleep(800);
-      setAgentStates(s => ({...s, 3:"done"}));
-      addLog(`✅ Comparator: ${data.gaps_found} gaps found`);
-
-      setAgentStates(s => ({...s, 4:"running"}));
-      addLog("✍️  Agent 4: Drafter creating outputs...");
-      await sleep(800);
-      setAgentStates(s => ({...s, 4:"done"}));
-      addLog(`✅ Drafter: Jira ${data.jira_key} created + Slack sent`);
-
-      setAgentStates(s => ({...s, 5:"done"}));
-      addLog("🎯 Pipeline complete!");
-
-      if (data.requires_human_review) {
-        addLog("⚠️  Human review required — Slack alert sent!");
+      if (data.status === "success") {
+        setLastResult(data);
+        addLog(`✅ Pipeline complete!`, "success");
+        addLog(`📋 Obligations: ${data.obligations_found}`, "success");
+        addLog(`🔍 Gaps: ${data.gaps_found}`, "success");
+        addLog(`⚖️  Conflicts: ${data.conflicts_found ?? 0}`, "success");
+        addLog(`🎫 Jira: ${data.jira_key}`, "success");
+        if (data.deadline) addLog(`📅 Deadline: ${data.deadline} (${data.days_remaining} days)`, "warning");
+        if (data.requires_human_review) addLog("⚠️  Human review required", "warning");
+        await fetchData();
+      } else {
+        addLog(`❌ Pipeline failed: ${data.message}`, "error");
+        AGENTS.forEach(name => setAgentStatus(prev => ({ ...prev, [name]: "idle" })));
       }
-
-      setPipelineStatus(data);
-    } catch {
-      addLog("❌ Pipeline failed — check backend");
-      setAgentStates({1:"idle",2:"idle",3:"idle",4:"idle",5:"idle"});
+    } catch (e) {
+      addLog("❌ Pipeline failed — check backend", "error");
     }
-    setLoadingPipeline(false);
+    setRunning(false);
   };
 
-  const sleep = (ms) => new Promise(r => setTimeout(r, ms));
+  const statusColor = (s) => ({
+    running: "#f59e0b", done: "#10b981", idle: "#6b7280", "": "#6b7280"
+  })[s] || "#6b7280";
 
-  const stateColor = { idle: "#94a3b8", running: "#f59e0b", done: "#22c55e" };
-  const stateLabel = { idle: "Idle", running: "Running...", done: "Done ✓" };
+  const confidenceBadge = (score) => {
+    const pct = Math.round((score ?? 0) * 100);
+    const color = pct >= 80 ? "#10b981" : pct >= 60 ? "#f59e0b" : "#ef4444";
+    return <span style={{ background: color, color: "#fff", borderRadius: 4, padding: "2px 7px", fontSize: 12, fontWeight: 700 }}>{pct}%</span>;
+  };
+
+  const tabs = ["dashboard", "gaps", "audit", "conflicts", "policies"];
 
   return (
-    <div style={{ minHeight: "100vh", backgroundColor: "#0f172a", color: "#e2e8f0", fontFamily: "Arial" }}>
+    <div style={{ background: "#0f172a", minHeight: "100vh", color: "#e2e8f0", fontFamily: "monospace", padding: 24 }}>
 
       {/* Header */}
-      <div style={{ backgroundColor: "#1e293b", padding: "16px 32px", borderBottom: "1px solid #334155", display: "flex", alignItems: "center", justifyContent: "space-between" }}>
-        <div style={{ display: "flex", alignItems: "center", gap: "12px" }}>
-          <span style={{ fontSize: "28px" }}>🤖</span>
-          <div>
-            <div style={{ fontSize: "20px", fontWeight: "bold", color: "#38bdf8" }}>ComplianceBot</div>
-            <div style={{ fontSize: "12px", color: "#64748b" }}>AI-Powered Regulatory Intelligence</div>
-          </div>
+      <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 24 }}>
+        <div>
+          <h1 style={{ margin: 0, fontSize: 24, color: "#38bdf8" }}>🤖 ComplianceBot</h1>
+          <p style={{ margin: 0, color: "#64748b", fontSize: 13 }}>RegWatch — Autonomous Compliance Pipeline</p>
         </div>
-        <div style={{ display: "flex", gap: "8px" }}>
-          {["dashboard", "analyze", "logs"].map(tab => (
-            <button key={tab} onClick={() => setActiveTab(tab)} style={{
-              padding: "8px 18px", borderRadius: "8px", border: "none", cursor: "pointer", fontSize: "14px", fontWeight: "600", textTransform: "capitalize",
-              backgroundColor: activeTab === tab ? "#38bdf8" : "#334155",
-              color: activeTab === tab ? "#0f172a" : "#94a3b8"
-            }}>{tab}</button>
+        <button
+          onClick={runPipeline}
+          disabled={running}
+          style={{
+            background: running ? "#334155" : "#3b82f6",
+            color: "#fff", border: "none", borderRadius: 8,
+            padding: "10px 24px", cursor: running ? "not-allowed" : "pointer",
+            fontSize: 14, fontWeight: 700
+          }}
+        >
+          {running ? "⏳ Running..." : "▶️ Run Full Pipeline"}
+        </button>
+      </div>
+
+      {/* Agent Cards */}
+      <div style={{ display: "grid", gridTemplateColumns: "repeat(6, 1fr)", gap: 10, marginBottom: 24 }}>
+        {AGENTS.map(name => (
+          <div key={name} style={{
+            background: "#1e293b", borderRadius: 8, padding: "12px 8px", textAlign: "center",
+            border: `2px solid ${statusColor(agentStatus[name] || "")}`,
+            transition: "border-color 0.3s"
+          }}>
+            <div style={{ fontSize: 20 }}>
+              {{ Monitor: "👁️", Interpreter: "📖", Comparator: "🔍", ConflictDetector: "⚖️", Drafter: "✍️", Orchestrator: "🎯" }[name]}
+            </div>
+            <div style={{ fontSize: 11, color: "#94a3b8", marginTop: 4 }}>{name}</div>
+            <div style={{ fontSize: 10, color: statusColor(agentStatus[name] || ""), marginTop: 2, fontWeight: 700 }}>
+              {agentStatus[name] === "running" ? "● RUNNING" : agentStatus[name] === "done" ? "✓ DONE" : "○ IDLE"}
+            </div>
+          </div>
+        ))}
+      </div>
+
+      {/* Summary Cards */}
+      {lastResult && (
+        <div style={{ display: "grid", gridTemplateColumns: "repeat(4, 1fr)", gap: 10, marginBottom: 24 }}>
+          {[
+            { label: "Obligations", value: lastResult.obligations_found, color: "#38bdf8" },
+            { label: "Gaps Found", value: lastResult.gaps_found, color: "#f59e0b" },
+            { label: "Conflicts", value: lastResult.conflicts_found ?? 0, color: "#a78bfa" },
+            { label: "Jira Ticket", value: lastResult.jira_key, color: "#10b981" },
+          ].map(({ label, value, color }) => (
+            <div key={label} style={{ background: "#1e293b", borderRadius: 8, padding: 16, textAlign: "center" }}>
+              <div style={{ fontSize: 22, fontWeight: 700, color }}>{value}</div>
+              <div style={{ fontSize: 12, color: "#64748b" }}>{label}</div>
+            </div>
           ))}
         </div>
+      )}
+
+      {/* Tabs */}
+      <div style={{ display: "flex", gap: 8, marginBottom: 16 }}>
+        {tabs.map(tab => (
+          <button key={tab} onClick={() => setActiveTab(tab)} style={{
+            background: activeTab === tab ? "#3b82f6" : "#1e293b",
+            color: activeTab === tab ? "#fff" : "#94a3b8",
+            border: "none", borderRadius: 6, padding: "6px 16px",
+            cursor: "pointer", fontSize: 13, fontWeight: 600, textTransform: "capitalize"
+          }}>
+            {{ dashboard: "📊 Dashboard", gaps: `🔍 Gaps (${gapReports.length})`, audit: `📋 Audit Trail (${auditTrail.length})`, conflicts: `⚖️ Conflicts (${conflicts.length})`, policies: `📁 Policies (${policies.length})` }[tab]}
+          </button>
+        ))}
       </div>
 
-      <div style={{ maxWidth: "1100px", margin: "0 auto", padding: "32px 24px" }}>
+      {/* Tab: Dashboard (Logs) */}
+      {activeTab === "dashboard" && (
+        <div style={{ background: "#1e293b", borderRadius: 8, padding: 16, minHeight: 300 }}>
+          <div style={{ fontSize: 13, color: "#64748b", marginBottom: 8 }}>Live Logs</div>
+          {logs.length === 0
+            ? <div style={{ color: "#475569", textAlign: "center", paddingTop: 40 }}>Click "Run Full Pipeline" to start</div>
+            : logs.map((l, i) => (
+              <div key={i} style={{
+                color: { success: "#10b981", error: "#ef4444", warning: "#f59e0b", info: "#94a3b8" }[l.type],
+                fontSize: 13, padding: "2px 0"
+              }}>
+                <span style={{ color: "#475569", marginRight: 8 }}>{l.time}</span>{l.msg}
+              </div>
+            ))
+          }
+        </div>
+      )}
 
-        {/* DASHBOARD TAB */}
-        {activeTab === "dashboard" && (
-          <div>
-            <h2 style={{ color: "#38bdf8", marginBottom: "8px" }}>Agent Pipeline Dashboard</h2>
-            <p style={{ color: "#64748b", marginBottom: "32px" }}>Monitor all 5 AI agents in real-time</p>
-
-            {/* Agent Cards */}
-            <div style={{ display: "grid", gridTemplateColumns: "repeat(5, 1fr)", gap: "12px", marginBottom: "32px" }}>
-              {agents.map(agent => (
-                <div key={agent.id} style={{
-                  backgroundColor: "#1e293b", borderRadius: "12px", padding: "16px", textAlign: "center",
-                  border: `2px solid ${agentStates[agent.id] === "running" ? "#f59e0b" : agentStates[agent.id] === "done" ? "#22c55e" : "#334155"}`,
-                  transition: "all 0.3s"
-                }}>
-                  <div style={{ fontSize: "28px", marginBottom: "8px" }}>{agent.icon}</div>
-                  <div style={{ fontWeight: "bold", fontSize: "13px", marginBottom: "4px" }}>{agent.name}</div>
-                  <div style={{ fontSize: "11px", color: "#64748b", marginBottom: "10px" }}>{agent.desc}</div>
-                  <div style={{
-                    fontSize: "11px", fontWeight: "bold", padding: "3px 8px", borderRadius: "20px", display: "inline-block",
-                    backgroundColor: agentStates[agent.id] === "running" ? "#78350f" : agentStates[agent.id] === "done" ? "#14532d" : "#1e293b",
-                    color: stateColor[agentStates[agent.id]]
-                  }}>{stateLabel[agentStates[agent.id]]}</div>
+      {/* Tab: Gap Reports */}
+      {activeTab === "gaps" && (
+        <div style={{ display: "flex", flexDirection: "column", gap: 12 }}>
+          {gapReports.length === 0
+            ? <div style={{ color: "#475569", textAlign: "center", padding: 40 }}>No gap reports yet — run the pipeline</div>
+            : gapReports.map(g => (
+              <div key={g.id} style={{ background: "#1e293b", borderRadius: 8, padding: 16, borderLeft: "4px solid #f59e0b" }}>
+                <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", marginBottom: 8 }}>
+                  <div style={{ fontWeight: 700, color: "#e2e8f0", fontSize: 14 }}>{g.gap_description}</div>
+                  {confidenceBadge(g.confidence_score)}
                 </div>
+                <div style={{ fontSize: 12, color: "#64748b", marginBottom: 4 }}>📌 {g.policy_section} · {g.jurisdiction} · {g.regulation_title?.slice(0, 50)}...</div>
+                <div style={{ fontSize: 12, color: "#94a3b8", marginBottom: 4 }}>💡 {g.confidence_reason}</div>
+                {g.deadline && <div style={{ fontSize: 12, color: "#f59e0b" }}>📅 Deadline: {g.deadline} · {g.days_remaining >= 0 ? `${g.days_remaining} days remaining` : "Overdue"}</div>}
+                <div style={{ display: "flex", gap: 8, marginTop: 8 }}>
+                  {g.jira_key && <span style={{ background: "#1d4ed8", color: "#fff", borderRadius: 4, padding: "2px 8px", fontSize: 11 }}>🎫 {g.jira_key}</span>}
+                  {g.requires_human_review && <span style={{ background: "#92400e", color: "#fcd34d", borderRadius: 4, padding: "2px 8px", fontSize: 11 }}>⚠️ Human Review</span>}
+                </div>
+              </div>
+            ))
+          }
+        </div>
+      )}
+
+      {/* Tab: Audit Trail */}
+      {activeTab === "audit" && (
+        <div style={{ background: "#1e293b", borderRadius: 8, padding: 16 }}>
+          <table style={{ width: "100%", borderCollapse: "collapse", fontSize: 12 }}>
+            <thead>
+              <tr style={{ color: "#64748b", textAlign: "left" }}>
+                {["Time", "Run ID", "Agent", "Action", "Decision", "Confidence", "Branch"].map(h => (
+                  <th key={h} style={{ padding: "6px 10px", borderBottom: "1px solid #334155" }}>{h}</th>
+                ))}
+              </tr>
+            </thead>
+            <tbody>
+              {auditTrail.map(e => (
+                <tr key={e.id} style={{ borderBottom: "1px solid #1e293b" }}>
+                  <td style={{ padding: "6px 10px", color: "#475569" }}>{e.timestamp?.slice(11, 19)}</td>
+                  <td style={{ padding: "6px 10px", color: "#38bdf8" }}>{e.pipeline_run_id}</td>
+                  <td style={{ padding: "6px 10px", color: "#a78bfa" }}>{e.agent_name}</td>
+                  <td style={{ padding: "6px 10px", color: "#94a3b8" }}>{e.action}</td>
+                  <td style={{ padding: "6px 10px", color: "#e2e8f0", maxWidth: 250, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{e.decision}</td>
+                  <td style={{ padding: "6px 10px" }}>{e.confidence != null ? confidenceBadge(e.confidence) : "—"}</td>
+                  <td style={{ padding: "6px 10px", color: e.branch_taken === "human_review" ? "#f59e0b" : "#64748b" }}>{e.branch_taken || "—"}</td>
+                </tr>
               ))}
-            </div>
+            </tbody>
+          </table>
+        </div>
+      )}
 
-            {/* Run Button */}
-            <div style={{ textAlign: "center", marginBottom: "32px" }}>
-              <button onClick={runPipeline} disabled={loadingPipeline} style={{
-                padding: "14px 48px", fontSize: "16px", fontWeight: "bold", borderRadius: "10px", border: "none", cursor: loadingPipeline ? "not-allowed" : "pointer",
-                backgroundColor: loadingPipeline ? "#334155" : "#38bdf8", color: loadingPipeline ? "#64748b" : "#0f172a"
-              }}>
-                {loadingPipeline ? "⏳ Pipeline Running..." : "▶️ Run Full Pipeline"}
-              </button>
-            </div>
-
-            {/* Result Cards */}
-            {pipelineStatus && (
-              <div style={{ display: "grid", gridTemplateColumns: "repeat(4, 1fr)", gap: "16px", marginBottom: "24px" }}>
-                {[
-                  { label: "Obligations Found", value: pipelineStatus.obligations_found, color: "#38bdf8" },
-                  { label: "Gaps Detected", value: pipelineStatus.gaps_found, color: "#f87171" },
-                  { label: "Jira Ticket", value: pipelineStatus.jira_key, color: "#a78bfa" },
-                  { label: "Human Review", value: pipelineStatus.requires_human_review ? "⚠️ Yes" : "✅ No", color: pipelineStatus.requires_human_review ? "#f59e0b" : "#22c55e" },
-                ].map(card => (
-                  <div key={card.label} style={{ backgroundColor: "#1e293b", borderRadius: "12px", padding: "20px", textAlign: "center", border: "1px solid #334155" }}>
-                    <div style={{ fontSize: "28px", fontWeight: "bold", color: card.color }}>{card.value}</div>
-                    <div style={{ fontSize: "12px", color: "#64748b", marginTop: "6px" }}>{card.label}</div>
-                  </div>
-                ))}
+      {/* Tab: Conflicts */}
+      {activeTab === "conflicts" && (
+        <div style={{ display: "flex", flexDirection: "column", gap: 12 }}>
+          {conflicts.length === 0
+            ? (
+              <div style={{ background: "#1e293b", borderRadius: 8, padding: 32, textAlign: "center" }}>
+                <div style={{ fontSize: 32, marginBottom: 8 }}>⚖️</div>
+                <div style={{ color: "#64748b" }}>No cross-jurisdiction conflicts detected yet.</div>
+                <div style={{ color: "#475569", fontSize: 12, marginTop: 4 }}>Conflicts appear when regulations from different jurisdictions contradict each other.</div>
               </div>
-            )}
-
-            {/* Live Logs */}
-            {logs.length > 0 && (
-              <div style={{ backgroundColor: "#1e293b", borderRadius: "12px", padding: "20px", border: "1px solid #334155" }}>
-                <div style={{ fontWeight: "bold", color: "#38bdf8", marginBottom: "12px" }}>📋 Live Logs</div>
-                {logs.map((log, i) => (
-                  <div key={i} style={{ fontSize: "13px", color: "#94a3b8", padding: "3px 0", borderBottom: "1px solid #0f172a" }}>{log}</div>
-                ))}
+            )
+            : conflicts.map(c => (
+              <div key={c.id} style={{ background: "#1e293b", borderRadius: 8, padding: 16, borderLeft: "4px solid #a78bfa" }}>
+                <div style={{ fontWeight: 700, color: "#a78bfa", marginBottom: 8 }}>
+                  🌍 {c.regulation_1_jurisdiction} vs {c.regulation_2_jurisdiction}
+                </div>
+                <div style={{ fontSize: 13, color: "#e2e8f0", marginBottom: 4 }}>{c.plain_english_explanation}</div>
+                <div style={{ fontSize: 11, color: "#64748b" }}>{c.regulation_1_title} · {c.regulation_2_title}</div>
               </div>
-            )}
-          </div>
-        )}
+            ))
+          }
+        </div>
+      )}
 
-        {/* ANALYZE TAB */}
-        {activeTab === "analyze" && (
-          <div>
-            <h2 style={{ color: "#38bdf8", marginBottom: "8px" }}>Quick Compliance Analysis</h2>
-            <p style={{ color: "#64748b", marginBottom: "24px" }}>Enter any compliance topic for instant AI analysis</p>
-            <div style={{ display: "flex", gap: "12px", marginBottom: "24px" }}>
-              <input
-                value={topic}
-                onChange={e => setTopic(e.target.value)}
-                onKeyDown={e => e.key === "Enter" && checkCompliance()}
-                placeholder="e.g. GDPR data privacy, HIPAA healthcare, RBI lending rules"
-                style={{
-                  flex: 1, padding: "12px 16px", fontSize: "15px", borderRadius: "10px",
-                  border: "2px solid #334155", backgroundColor: "#1e293b", color: "#e2e8f0", outline: "none"
-                }}
-              />
-              <button onClick={checkCompliance} disabled={loadingAnalysis} style={{
-                padding: "12px 28px", fontSize: "15px", fontWeight: "bold", borderRadius: "10px", border: "none", cursor: "pointer",
-                backgroundColor: "#38bdf8", color: "#0f172a"
-              }}>
-                {loadingAnalysis ? "Analyzing..." : "Analyze"}
-              </button>
-            </div>
-            {analysis && (
-              <div style={{ backgroundColor: "#1e293b", borderRadius: "12px", padding: "24px", border: "1px solid #334155", whiteSpace: "pre-wrap", lineHeight: "1.7", color: "#cbd5e1" }}>
-                <div style={{ fontWeight: "bold", color: "#38bdf8", marginBottom: "12px" }}>📋 Analysis Result</div>
-                {analysis}
+      {/* Tab: Policies */}
+      {activeTab === "policies" && (
+        <div style={{ display: "flex", flexDirection: "column", gap: 12 }}>
+          {policies.map(p => (
+            <div key={p.id} style={{ background: "#1e293b", borderRadius: 8, padding: 16, borderLeft: `4px solid ${p.updated_by === "ComplianceBot Agent" ? "#10b981" : "#334155"}` }}>
+              <div style={{ display: "flex", justifyContent: "space-between", marginBottom: 6 }}>
+                <div style={{ fontWeight: 700, color: "#e2e8f0" }}>{p.title} <span style={{ color: "#64748b", fontSize: 12 }}>({p.section})</span></div>
+                <div style={{ display: "flex", gap: 6 }}>
+                  <span style={{ background: "#1d4ed8", color: "#fff", borderRadius: 4, padding: "2px 8px", fontSize: 11 }}>v{p.version}</span>
+                  <span style={{ background: "#0f172a", color: "#64748b", borderRadius: 4, padding: "2px 8px", fontSize: 11 }}>{p.jurisdiction}</span>
+                  {p.updated_by === "ComplianceBot Agent" && <span style={{ background: "#064e3b", color: "#10b981", borderRadius: 4, padding: "2px 8px", fontSize: 11 }}>🤖 Auto-updated</span>}
+                </div>
               </div>
-            )}
-          </div>
-        )}
-
-        {/* LOGS TAB */}
-        {activeTab === "logs" && (
-          <div>
-            <h2 style={{ color: "#38bdf8", marginBottom: "8px" }}>System Logs</h2>
-            <p style={{ color: "#64748b", marginBottom: "24px" }}>All agent activity from this session</p>
-            <div style={{ backgroundColor: "#1e293b", borderRadius: "12px", padding: "20px", border: "1px solid #334155", minHeight: "300px" }}>
-              {logs.length === 0
-                ? <div style={{ color: "#475569", textAlign: "center", marginTop: "80px" }}>No logs yet — run the pipeline from the Dashboard tab</div>
-                : logs.map((log, i) => (
-                  <div key={i} style={{ fontSize: "13px", color: "#94a3b8", padding: "5px 0", borderBottom: "1px solid #0f172a", fontFamily: "monospace" }}>{log}</div>
-                ))
-              }
+              <div style={{ fontSize: 12, color: "#94a3b8", maxHeight: 80, overflow: "hidden", textOverflow: "ellipsis" }}>{p.content?.slice(0, 300)}...</div>
+              <div style={{ fontSize: 11, color: "#475569", marginTop: 6 }}>Last updated: {p.last_updated?.slice(0, 10)} by {p.updated_by}</div>
             </div>
-          </div>
-        )}
-
-      </div>
+          ))}
+        </div>
+      )}
     </div>
   );
 }
