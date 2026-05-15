@@ -28,6 +28,16 @@ RSS_FEEDS = [
         "url": "https://www.sec.gov/cgi-bin/browse-edgar?action=getcurrent&type=&dateb=&owner=include&count=10&search_text=&output=atom",
         "jurisdiction": "US",
         "topic": "securities"
+    },
+    {
+        "url": "https://eur-lex.europa.eu/RSSCOMPONENT/index.html?locale=en&type=LEGAL_ACT",
+        "jurisdiction": "EU",
+        "topic": "eu_legislation"
+    },
+    {
+        "url": "https://www.legislation.gov.uk/new/data.feed",
+        "jurisdiction": "UK",
+        "topic": "uk_legislation"
     }
 ]
 

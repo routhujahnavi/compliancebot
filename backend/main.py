@@ -1,4 +1,5 @@
 from fastapi import FastAPI, Depends
+from fastapi.responses import FileResponse
 from fastapi.middleware.cors import CORSMiddleware
 from dotenv import load_dotenv
 import sys
@@ -232,3 +233,104 @@ def get_policies(db: Session = Depends(get_db)):
         }
         for e in entries
     ]
+
+# ── PDF Export ────────────────────────────────────────────────────────
+@app.get("/export-pdf")
+def export_gap_report_pdf(db: Session = Depends(get_db)):
+    try:
+        from pdf_exporter import generate_gap_report_pdf
+
+        gap_reports = db.query(GapReport).order_by(GapReport.created_at.desc()).limit(50).all()
+        conflicts = db.query(JurisdictionConflict).order_by(JurisdictionConflict.detected_at.desc()).all()
+
+        gap_list = [
+            {
+                "regulation_title": g.regulation_title,
+                "gap_description": g.gap_description,
+                "confidence_score": g.confidence_score,
+                "confidence_reason": g.confidence_reason,
+                "policy_section": g.policy_section,
+                "jurisdiction": g.jurisdiction,
+                "deadline": g.deadline,
+                "days_remaining": g.days_remaining,
+                "requires_human_review": g.requires_human_review,
+                "jira_key": g.jira_key
+            }
+            for g in gap_reports
+        ]
+
+        conflict_list = [
+            {
+                "regulation_1_title": c.regulation_1_title,
+                "regulation_1_jurisdiction": c.regulation_1_jurisdiction,
+                "regulation_2_title": c.regulation_2_title,
+                "regulation_2_jurisdiction": c.regulation_2_jurisdiction,
+                "plain_english_explanation": c.plain_english_explanation
+            }
+            for c in conflicts
+        ]
+
+        pdf_path = generate_gap_report_pdf(gap_list, conflict_list)
+
+        return FileResponse(
+            path=pdf_path,
+            media_type="application/pdf",
+            filename="ComplianceBot_GapReport.pdf"
+        )
+
+    except Exception as e:
+        return {"status": "error", "message": str(e)}
+
+
+@app.get("/export-pdf-test")
+def export_pdf_test():
+    try:
+        from pdf_exporter import generate_gap_report_pdf
+
+        test_gaps = [
+            {
+                "regulation_title": "Data Privacy Amendment 2025",
+                "gap_description": "No end-to-end encryption policy for customer data at rest",
+                "confidence_score": 0.91,
+                "confidence_reason": "Direct obligation match found in regulation text",
+                "policy_section": "Section 4.2 — Data Security",
+                "jurisdiction": "US",
+                "deadline": "2025-03-31",
+                "days_remaining": 45,
+                "requires_human_review": False,
+                "jira_key": "COMP-42"
+            },
+            {
+                "regulation_title": "EU GDPR Article 17 Update",
+                "gap_description": "Right to erasure not implemented for third-party vendor data",
+                "confidence_score": 0.65,
+                "confidence_reason": "Partial match — vendor contracts unclear",
+                "policy_section": "Section 7.1 — Vendor Management",
+                "jurisdiction": "EU",
+                "deadline": "2025-06-01",
+                "days_remaining": 12,
+                "requires_human_review": True,
+                "jira_key": "COMP-43"
+            }
+        ]
+
+        test_conflicts = [
+            {
+                "regulation_1_title": "US CLOUD Act",
+                "regulation_1_jurisdiction": "US",
+                "regulation_2_title": "EU GDPR",
+                "regulation_2_jurisdiction": "EU",
+                "plain_english_explanation": "US law requires data disclosure to authorities in ways that violate EU privacy rights."
+            }
+        ]
+
+        pdf_path = generate_gap_report_pdf(test_gaps, test_conflicts)
+
+        return FileResponse(
+            path=pdf_path,
+            media_type="application/pdf",
+            filename="ComplianceBot_TestReport.pdf"
+        )
+
+    except Exception as e:
+        return {"status": "error", "message": str(e)}

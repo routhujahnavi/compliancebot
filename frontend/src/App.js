@@ -1,7 +1,6 @@
 import { useState, useEffect } from "react";
 
-const BACKEND = "http://localhost:8000";
-
+const BACKEND = process.env.REACT_APP_BACKEND_URL || "http://localhost:8001";
 const AGENTS = ["Monitor", "Interpreter", "Comparator", "ConflictDetector", "Drafter", "Orchestrator"];
 
 export default function App() {
@@ -97,6 +96,7 @@ export default function App() {
   };
 
   const tabs = ["dashboard", "gaps", "audit", "conflicts", "policies"];
+  const downloadPDF = () => window.open(`${BACKEND}/export-pdf`, "_blank");
 
   return (
     <div style={{ background: "#0f172a", minHeight: "100vh", color: "#e2e8f0", fontFamily: "monospace", padding: 24 }}>
@@ -107,18 +107,30 @@ export default function App() {
           <h1 style={{ margin: 0, fontSize: 24, color: "#38bdf8" }}>🤖 ComplianceBot</h1>
           <p style={{ margin: 0, color: "#64748b", fontSize: 13 }}>RegWatch — Autonomous Compliance Pipeline</p>
         </div>
-        <button
-          onClick={runPipeline}
-          disabled={running}
-          style={{
-            background: running ? "#334155" : "#3b82f6",
-            color: "#fff", border: "none", borderRadius: 8,
-            padding: "10px 24px", cursor: running ? "not-allowed" : "pointer",
-            fontSize: 14, fontWeight: 700
-          }}
-        >
-          {running ? "⏳ Running..." : "▶️ Run Full Pipeline"}
-        </button>
+        <div style={{ display: "flex", gap: 8 }}>
+          <button
+            onClick={runPipeline}
+            disabled={running}
+            style={{
+              background: running ? "#334155" : "#3b82f6",
+              color: "#fff", border: "none", borderRadius: 8,
+              padding: "10px 24px", cursor: running ? "not-allowed" : "pointer",
+              fontSize: 14, fontWeight: 700
+            }}
+          >
+            {running ? "⏳ Running..." : "▶️ Run Full Pipeline"}
+          </button>
+          <button
+            onClick={downloadPDF}
+            style={{
+              background: "#10b981", color: "#fff", border: "none",
+              borderRadius: 8, padding: "10px 24px", cursor: "pointer",
+              fontSize: 14, fontWeight: 700
+            }}
+          >
+            📄 Export PDF
+          </button>
+        </div>
       </div>
 
       {/* Agent Cards */}
@@ -284,6 +296,7 @@ export default function App() {
           ))}
         </div>
       )}
+
     </div>
   );
 }
