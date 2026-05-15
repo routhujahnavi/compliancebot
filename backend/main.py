@@ -48,6 +48,7 @@ JIRA_API_TOKEN = os.getenv("JIRA_API_TOKEN")
 JIRA_EMAIL = os.getenv("JIRA_EMAIL")
 JIRA_URL = os.getenv("JIRA_URL")
 JIRA_PROJECT_KEY = os.getenv("JIRA_PROJECT_KEY")
+WEBHOOK_SECRET = os.getenv("WEBHOOK_SECRET", "compliancebot-secret")
 
 @app.get("/")
 def home():
@@ -427,7 +428,6 @@ def approve_hitl_review(review_id: int, db: Session = Depends(get_db)):
     if review.status != "pending":
         return {"status": "error", "message": f"Review already {review.status}"}
 
-    # Use Groq LLM to rewrite the policy
     try:
         prompt = f"""You are a compliance policy writer. Rewrite and improve the following policy section to address the identified compliance gap.
 
@@ -478,3 +478,38 @@ def dismiss_hitl_review(review_id: int, db: Session = Depends(get_db)):
     db.commit()
     print(f"  ❌ HITL review {review_id} dismissed")
     return {"status": "success", "review_id": review_id}
+
+# ── Webhook Trigger ──────────────────────────────────────────────────
+class WebhookPayload(BaseModel):
+    event: str        # e.g. "regulation.updated", "policy.changed"
+    source: str       # e.g. "federal-register", "github", "zapier"
+    data: Optional[dict] = {}
+
+@app.post("/webhook")
+async def webhook_trigger(payload: WebhookPayload, db: Session = Depends(get_db)):
+    """
+    External webhook trigger — fires the compliance pipeline
+    when a regulation update or policy change is detected from any source.
+    """
+    print(f"🔔 Webhook received: {payload.event} from {payload.source}")
+
+    # Log webhook event to audit trail
+    db.add(AuditTrail(
+        pipeline_run_id="webhook",
+        agent_name="Webhook",
+        action="webhook_received",
+        decision=f"Event: {payload.event} from {payload.source}",
+        branch_taken="trigger_pipeline",
+        regulation_title=str(payload.data)
+    ))
+    db.commit()
+
+    # Fire pipeline asynchronously — non-blocking
+    asyncio.create_task(run_orchestrator())
+
+    return {
+        "status": "accepted",
+        "event": payload.event,
+        "source": payload.source,
+        "message": "Pipeline triggered successfully — running autonomously in background"
+    }
