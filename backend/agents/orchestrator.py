@@ -1,11 +1,13 @@
 import asyncio
 import os
+import uuid
 import requests
 from dotenv import load_dotenv
 from agents.monitor import run_monitor
 from agents.interpreter import run_interpreter
 from agents.comparator import run_comparator
 from agents.drafter import run_drafter
+from agents.conflict_detector import run_conflict_detector
 
 load_dotenv()
 
@@ -27,8 +29,11 @@ def send_human_review_alert(title, reason):
         print(f"❌ Slack alert error: {e}")
 
 async def run_pipeline(document: dict):
+    pipeline_run_id = str(uuid.uuid4())[:8]
+
     results = {
         "document_title": document.get("title", ""),
+        "pipeline_run_id": pipeline_run_id,
         "stages": {}
     }
 
@@ -37,7 +42,7 @@ async def run_pipeline(document: dict):
     interpreted = None
     for attempt in range(3):
         try:
-            interpreted = await run_interpreter(document)
+            interpreted = await run_interpreter(document, pipeline_run_id=pipeline_run_id)
             if interpreted:
                 results["stages"]["interpreter"] = "success"
                 break
@@ -64,7 +69,7 @@ async def run_pipeline(document: dict):
     gap_data = None
     for attempt in range(3):
         try:
-            gap_data = await run_comparator(interpreted)
+            gap_data = await run_comparator(interpreted, pipeline_run_id=pipeline_run_id)
             if gap_data:
                 results["stages"]["comparator"] = "success"
                 break
@@ -76,12 +81,24 @@ async def run_pipeline(document: dict):
         results["stages"]["comparator"] = "failed"
         return results
 
+    # Stage 3b: USB 06 — Cross-jurisdiction conflict detection
+    print("\n--- Stage 3b: Conflict Detector (USB 06) ---")
+    conflict_result = {"conflicts": []}
+    try:
+        conflict_result = await run_conflict_detector(interpreted, pipeline_run_id=pipeline_run_id)
+        results["stages"]["conflict_detector"] = "success"
+        results["conflicts_found"] = len(conflict_result.get("conflicts", []))
+    except Exception as e:
+        print(f"  ⚠️  Conflict detector error (non-fatal): {e}")
+        results["stages"]["conflict_detector"] = "skipped"
+        results["conflicts_found"] = 0
+
     # Stage 4: Draft
     print("\n--- Stage 4: Drafter ---")
     draft_result = None
     for attempt in range(3):
         try:
-            draft_result = await run_drafter(gap_data)
+            draft_result = await run_drafter(gap_data, pipeline_run_id=pipeline_run_id)
             if draft_result:
                 results["stages"]["drafter"] = "success"
                 break
@@ -96,9 +113,10 @@ async def run_pipeline(document: dict):
     results["jira_key"] = draft_result.get("jira_key")
     results["gaps_count"] = draft_result.get("gaps_count")
     results["doc_path"] = draft_result.get("doc_path")
+    results["requires_human_review"] = draft_result.get("requires_human_review", False)
     results["status"] = "complete"
 
-    print(f"\n✅ Pipeline complete! {results['gaps_count']} gaps found. Jira: {results['jira_key']}")
+    print(f"\n✅ Pipeline complete! Gaps: {results['gaps_count']} | Conflicts: {results['conflicts_found']} | Jira: {results['jira_key']}")
     return results
 
 

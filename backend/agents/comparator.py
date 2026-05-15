@@ -61,7 +61,6 @@ async def run_comparator(interpreted: dict, pipeline_run_id: str = None):
     jurisdiction = interpreted.get("jurisdiction", "US")
     regulation_title = interpreted.get("title", "")
 
-    # Pull policies from DB
     policies = get_policies_from_db(topic=topic, jurisdiction=jurisdiction)
     log_audit(pipeline_run_id, "pulled_policies", f"Found {len(policies)} relevant policies", regulation_title=regulation_title)
 
@@ -87,8 +86,8 @@ Each gap must have:
 - "gap": what is missing (one sentence)
 - "obligation": the regulation requirement
 - "policy_section": which policy section is affected
-- "confidence_score": float 0.0-1.0 (how confident you are this is a real gap)
-- "confidence_reason": plain English explanation of why this is a gap and your confidence level
+- "confidence_score": float 0.0-1.0
+- "confidence_reason": plain English explanation
 - "suggested_fix": one sentence fix
 
 Return ONLY valid JSON array. No markdown, no explanation outside JSON."""
@@ -97,4 +96,34 @@ Return ONLY valid JSON array. No markdown, no explanation outside JSON."""
         model="llama-3.3-70b-versatile",
         messages=[
             {"role": "system", "content": "You are a compliance expert. Return only valid JSON."},
-            {"role": "user", "content":
+            {"role": "user", "content": prompt}
+        ],
+        temperature=0.2
+    )
+
+    raw = response.choices[0].message.content.strip()
+
+    try:
+        if "```" in raw:
+            raw = raw.split("```")[1]
+            if raw.startswith("json"):
+                raw = raw[4:]
+        gaps = json.loads(raw.strip())
+    except:
+        gaps = []
+
+    log_audit(pipeline_run_id, "gaps_identified", f"{len(gaps)} gaps found", confidence=0.85, regulation_title=regulation_title)
+    print(f"  ✅ {len(gaps)} gaps found with confidence scores")
+
+    return {
+        "regulation_title": regulation_title,
+        "regulation_hash": interpreted.get("hash", ""),
+        "jurisdiction": jurisdiction,
+        "topic": topic,
+        "obligations": obligations,
+        "gaps": gaps,
+        "deadline": interpreted.get("deadline", ""),
+        "days_remaining": interpreted.get("days_remaining", -1),
+        "enforcement_context": interpreted.get("enforcement_context", ""),
+        "pipeline_run_id": pipeline_run_id
+    }
