@@ -1,4 +1,4 @@
-from fastapi import FastAPI
+from fastapi import FastAPI, Depends
 from fastapi.middleware.cors import CORSMiddleware
 from dotenv import load_dotenv
 import sys
@@ -9,11 +9,16 @@ from groq import Groq
 from tavily import TavilyClient
 from agents.orchestrator import run_orchestrator
 from agents.monitor import run_monitor
+from database import init_db, get_db, AuditTrail, GapReport, JurisdictionConflict, CompanyPolicy
+from sqlalchemy.orm import Session
 import asyncio
 
 load_dotenv()
 
 app = FastAPI()
+
+# Initialize database on startup
+init_db()
 
 app.add_middleware(
     CORSMiddleware,
@@ -67,12 +72,7 @@ def check_compliance(topic: str):
                 "content": [
                     {
                         "type": "paragraph",
-                        "content": [
-                            {
-                                "type": "text",
-                                "text": analysis
-                            }
-                        ]
+                        "content": [{"type": "text", "text": analysis}]
                     }
                 ]
             },
@@ -86,7 +86,6 @@ def check_compliance(topic: str):
         auth=(JIRA_EMAIL, JIRA_API_TOKEN)
     )
     print("Jira response:", jira_response.status_code, jira_response.text)
-
     return {"analysis": analysis}
 
 @app.post("/run-pipeline")
@@ -100,7 +99,7 @@ async def run_pipeline_endpoint():
 @app.get("/pipeline-status")
 async def pipeline_status():
     return {
-        "agents": ["Monitor", "Interpreter", "Comparator", "Drafter", "Orchestrator"],
+        "agents": ["Monitor", "Interpreter", "Comparator", "ConflictDetector", "Drafter", "Orchestrator"],
         "status": "ready"
     }
 
@@ -120,26 +119,116 @@ async def run_pipeline_test():
         from agents.interpreter import run_interpreter
         from agents.comparator import run_comparator
         from agents.drafter import run_drafter
+        from agents.conflict_detector import run_conflict_detector
+        import uuid
+
+        pipeline_run_id = str(uuid.uuid4())[:8]
 
         print("\n🧪 TEST MODE — running with sample document")
 
-        interpreted = await run_interpreter(test_document)
+        interpreted = await run_interpreter(test_document, pipeline_run_id=pipeline_run_id)
         if not interpreted:
             return {"status": "error", "stage": "interpreter"}
 
-        gap_data = await run_comparator(interpreted)
+        gap_data = await run_comparator(interpreted, pipeline_run_id=pipeline_run_id)
         if not gap_data:
             return {"status": "error", "stage": "comparator"}
 
-        draft_result = await run_drafter(gap_data)
+        conflict_result = await run_conflict_detector(interpreted, pipeline_run_id=pipeline_run_id)
+
+        draft_result = await run_drafter(gap_data, pipeline_run_id=pipeline_run_id)
 
         return {
             "status": "success",
+            "pipeline_run_id": pipeline_run_id,
             "obligations_found": len(interpreted.get("obligations", [])),
             "gaps_found": draft_result.get("gaps_count"),
+            "conflicts_found": len(conflict_result.get("conflicts", [])),
             "jira_key": draft_result.get("jira_key"),
-            "requires_human_review": interpreted.get("requires_human_review")
+            "requires_human_review": interpreted.get("requires_human_review"),
+            "deadline": interpreted.get("deadline", ""),
+            "days_remaining": interpreted.get("days_remaining", -1)
         }
 
     except Exception as e:
         return {"status": "error", "message": str(e)}
+
+# ── USB 10: Audit Trail ───────────────────────────────────────────────
+@app.get("/audit-trail")
+def get_audit_trail(limit: int = 50, db: Session = Depends(get_db)):
+    entries = db.query(AuditTrail).order_by(AuditTrail.timestamp.desc()).limit(limit).all()
+    return [
+        {
+            "id": e.id,
+            "pipeline_run_id": e.pipeline_run_id,
+            "agent_name": e.agent_name,
+            "action": e.action,
+            "decision": e.decision,
+            "branch_taken": e.branch_taken,
+            "confidence": e.confidence,
+            "regulation_title": e.regulation_title,
+            "timestamp": e.timestamp.isoformat() if e.timestamp else None
+        }
+        for e in entries
+    ]
+
+# ── USB 09: Gap Reports ───────────────────────────────────────────────
+@app.get("/gap-reports")
+def get_gap_reports(limit: int = 20, db: Session = Depends(get_db)):
+    entries = db.query(GapReport).order_by(GapReport.created_at.desc()).limit(limit).all()
+    return [
+        {
+            "id": e.id,
+            "regulation_title": e.regulation_title,
+            "gap_description": e.gap_description,
+            "confidence_score": e.confidence_score,
+            "confidence_reason": e.confidence_reason,
+            "policy_section": e.policy_section,
+            "jurisdiction": e.jurisdiction,
+            "deadline": e.deadline,
+            "days_remaining": e.days_remaining,
+            "enforcement_context": e.enforcement_context,
+            "jira_key": e.jira_key,
+            "requires_human_review": e.requires_human_review,
+            "created_at": e.created_at.isoformat() if e.created_at else None
+        }
+        for e in entries
+    ]
+
+# ── USB 06: Jurisdiction Conflicts ────────────────────────────────────
+@app.get("/conflicts")
+def get_conflicts(db: Session = Depends(get_db)):
+    entries = db.query(JurisdictionConflict).order_by(JurisdictionConflict.detected_at.desc()).all()
+    return [
+        {
+            "id": e.id,
+            "regulation_1_title": e.regulation_1_title,
+            "regulation_1_jurisdiction": e.regulation_1_jurisdiction,
+            "regulation_2_title": e.regulation_2_title,
+            "regulation_2_jurisdiction": e.regulation_2_jurisdiction,
+            "conflict_description": e.conflict_description,
+            "plain_english_explanation": e.plain_english_explanation,
+            "detected_at": e.detected_at.isoformat() if e.detected_at else None,
+            "resolved": e.resolved
+        }
+        for e in entries
+    ]
+
+# ── Policies ──────────────────────────────────────────────────────────
+@app.get("/policies")
+def get_policies(db: Session = Depends(get_db)):
+    entries = db.query(CompanyPolicy).filter(CompanyPolicy.is_active == True).all()
+    return [
+        {
+            "id": e.id,
+            "title": e.title,
+            "section": e.section,
+            "content": e.content,
+            "version": e.version,
+            "jurisdiction": e.jurisdiction,
+            "topic": e.topic,
+            "last_updated": e.last_updated.isoformat() if e.last_updated else None,
+            "updated_by": e.updated_by
+        }
+        for e in entries
+    ]
