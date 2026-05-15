@@ -30,7 +30,7 @@ def check_compliance(topic: str):
 
     # Ask Groq AI to analyze
     response = groq_client.chat.completions.create(
-        model="llama3-8b-8192",
+        model="llama-3.3-70b-versatile",
         messages=[
             {"role": "system", "content": "You are a compliance expert."},
             {"role": "user", "content": f"Analyze this compliance topic: {topic}\n\nContext: {context}"}
@@ -51,15 +51,30 @@ def check_compliance(topic: str):
         "fields": {
             "project": {"key": JIRA_PROJECT_KEY},
             "summary": f"Compliance Issue: {topic}",
-            "description": analysis,
+            "description": {
+                "type": "doc",
+                "version": 1,
+                "content": [
+                    {
+                        "type": "paragraph",
+                        "content": [
+                            {
+                                "type": "text",
+                                "text": analysis
+                            }
+                        ]
+                    }
+                ]
+            },
             "issuetype": {"name": "Task"}
         }
     }
-    requests.post(
+    jira_response = requests.post(
         f"{JIRA_URL}/rest/api/3/issue",
         json=jira_data,
         headers=jira_headers,
         auth=(JIRA_EMAIL, JIRA_API_TOKEN)
     )
+    print("Jira response:", jira_response.status_code, jira_response.text)
 
     return {"analysis": analysis}
