@@ -1,14 +1,18 @@
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from dotenv import load_dotenv
+import sys
 import os
+sys.path.insert(0, os.path.dirname(__file__))
 import requests
 from groq import Groq
 from tavily import TavilyClient
+from agents.orchestrator import run_orchestrator
+from agents.monitor import run_monitor
+import asyncio
 
 load_dotenv()
 
-app = FastAPI()
 app = FastAPI()
 
 app.add_middleware(
@@ -34,11 +38,9 @@ def home():
 
 @app.post("/check-compliance")
 def check_compliance(topic: str):
-    # Search for latest compliance info
     search_results = tavily_client.search(topic)
     context = search_results["results"][0]["content"]
 
-    # Ask Groq AI to analyze
     response = groq_client.chat.completions.create(
         model="llama-3.3-70b-versatile",
         messages=[
@@ -48,11 +50,9 @@ def check_compliance(topic: str):
     )
     analysis = response.choices[0].message.content
 
-    # Send to Slack
     slack_message = {"text": f"Compliance Alert: {topic}\n\n{analysis}"}
     requests.post(SLACK_WEBHOOK_URL, json=slack_message)
 
-    # Create Jira ticket
     jira_headers = {
         "Accept": "application/json",
         "Content-Type": "application/json"
@@ -88,3 +88,58 @@ def check_compliance(topic: str):
     print("Jira response:", jira_response.status_code, jira_response.text)
 
     return {"analysis": analysis}
+
+@app.post("/run-pipeline")
+async def run_pipeline_endpoint():
+    try:
+        results = await run_orchestrator()
+        return {"status": "success", "results": results}
+    except Exception as e:
+        return {"status": "error", "message": str(e)}
+
+@app.get("/pipeline-status")
+async def pipeline_status():
+    return {
+        "agents": ["Monitor", "Interpreter", "Comparator", "Drafter", "Orchestrator"],
+        "status": "ready"
+    }
+
+@app.post("/run-pipeline-test")
+async def run_pipeline_test():
+    try:
+        test_document = {
+            "hash": "test123",
+            "url": "https://www.federalregister.gov/test",
+            "title": "New Data Privacy Amendment 2025 - Financial Institutions Must Encrypt Customer Data",
+            "date": "2025-01-15",
+            "jurisdiction": "US",
+            "topic": "data privacy",
+            "summary": "Financial institutions must implement end-to-end encryption for all customer data by March 2025. Institutions must conduct quarterly security audits. Failure to comply results in fines up to $500,000. All third party vendors must be certified within 60 days."
+        }
+
+        from agents.interpreter import run_interpreter
+        from agents.comparator import run_comparator
+        from agents.drafter import run_drafter
+
+        print("\n🧪 TEST MODE — running with sample document")
+
+        interpreted = await run_interpreter(test_document)
+        if not interpreted:
+            return {"status": "error", "stage": "interpreter"}
+
+        gap_data = await run_comparator(interpreted)
+        if not gap_data:
+            return {"status": "error", "stage": "comparator"}
+
+        draft_result = await run_drafter(gap_data)
+
+        return {
+            "status": "success",
+            "obligations_found": len(interpreted.get("obligations", [])),
+            "gaps_found": draft_result.get("gaps_count"),
+            "jira_key": draft_result.get("jira_key"),
+            "requires_human_review": interpreted.get("requires_human_review")
+        }
+
+    except Exception as e:
+        return {"status": "error", "message": str(e)}
