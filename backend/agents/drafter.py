@@ -61,12 +61,13 @@ def save_gaps_to_db(gap_data: dict, jira_key: str, doc_path: str):
         db.close()
 
 def create_hitl_reviews(gap_data: dict):
-    """Create HITL review entries for gaps with confidence < 0.7."""
+    """Create HITL review entries for gaps with confidence < 0.7 and send emails."""
     db = SessionLocal()
     try:
         regulation_title = gap_data.get("regulation_title", "")
         jurisdiction = gap_data.get("jurisdiction", "")
-        count = 0
+        created_reviews = []
+
         for gap in gap_data.get("gaps", []):
             score = gap.get("confidence_score", 1.0)
             if score < 0.7:
@@ -80,22 +81,28 @@ def create_hitl_reviews(gap_data: dict):
                     status="pending"
                 )
                 db.add(review)
-                db.flush()  # get the ID before commit
-                count += 1
-                # Send HITL email notification
-                try:
-                    send_hitl_review_email(
-                        review_id=review.id,
-                        policy_name=review.policy_name,
-                        confidence_score=score,
-                        gap_description=review.gap_description,
-                        regulation_title=regulation_title
-                    )
-                except Exception as e:
-                    print(f"  ⚠️  HITL email failed: {e}")
+                created_reviews.append(review)
+
+        # Commit first so all reviews get real DB IDs
         db.commit()
-        if count:
-            print(f"  🔍 {count} HITL review(s) created for low-confidence gaps")
+
+        # Now send emails with real IDs
+        for review in created_reviews:
+            try:
+                send_hitl_review_email(
+                    review_id=review.id,
+                    policy_name=review.policy_name,
+                    confidence_score=review.confidence_score,
+                    gap_description=review.gap_description,
+                    regulation_title=regulation_title
+                )
+                print(f"  📧 HITL email sent for review {review.id} (confidence: {review.confidence_score:.0%})")
+            except Exception as e:
+                print(f"  ⚠️  HITL email failed for review {review.id}: {e}")
+
+        if created_reviews:
+            print(f"  🔍 {len(created_reviews)} HITL review(s) created for low-confidence gaps")
+
     finally:
         db.close()
 
@@ -287,7 +294,7 @@ Be specific, use compliance terminology."""
     gap_data["enforcement_context"] = enforcement_context
     save_gaps_to_db(gap_data, jira_key or "", doc_path)
 
-    # Create HITL reviews for low-confidence gaps
+    # Create HITL reviews for low-confidence gaps and send emails
     try:
         create_hitl_reviews(gap_data)
     except Exception as e:
