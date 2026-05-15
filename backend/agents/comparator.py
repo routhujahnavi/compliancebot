@@ -1,89 +1,100 @@
 import os
-import chromadb
-from chromadb.utils import embedding_functions
+import json
+import sys
+sys.path.insert(0, os.path.dirname(os.path.dirname(__file__)))
+from groq import Groq
 from dotenv import load_dotenv
+from database import SessionLocal, CompanyPolicy, AuditTrail
+from datetime import datetime
+import uuid
 
 load_dotenv()
+client = Groq(api_key=os.getenv("GROQ_API_KEY"))
 
-SOP_PATH = os.path.join(os.path.dirname(__file__), "../SOPs/aml_policy.txt")
-
-def load_sop_into_chroma():
-    print("📚 Loading SOPs into vector database...")
-    client = chromadb.Client()
-
+def log_audit(pipeline_run_id, action, decision, branch=None, confidence=None, regulation_title=None):
+    db = SessionLocal()
     try:
-        client.delete_collection("sop_collection")
-    except:
-        pass
+        db.add(AuditTrail(
+            pipeline_run_id=pipeline_run_id,
+            agent_name="Comparator",
+            action=action,
+            decision=decision,
+            branch_taken=branch or "",
+            confidence=confidence,
+            regulation_title=regulation_title or ""
+        ))
+        db.commit()
+    finally:
+        db.close()
 
-    ef = embedding_functions.DefaultEmbeddingFunction()
-    collection = client.create_collection(
-        name="sop_collection",
-        embedding_function=ef
-    )
+def get_policies_from_db(topic=None, jurisdiction=None):
+    db = SessionLocal()
+    try:
+        query = db.query(CompanyPolicy).filter(CompanyPolicy.is_active == True)
+        if topic:
+            query = query.filter(CompanyPolicy.topic.contains(topic))
+        policies = query.all()
+        if not policies:
+            policies = db.query(CompanyPolicy).filter(CompanyPolicy.is_active == True).all()
+        return [
+            {
+                "title": p.title,
+                "section": p.section,
+                "content": p.content,
+                "version": p.version,
+                "jurisdiction": p.jurisdiction,
+                "topic": p.topic
+            }
+            for p in policies
+        ]
+    finally:
+        db.close()
 
-    with open(SOP_PATH, "r") as f:
-        content = f.read()
+async def run_comparator(interpreted: dict, pipeline_run_id: str = None):
+    if not pipeline_run_id:
+        pipeline_run_id = str(uuid.uuid4())[:8]
 
-    chunks = [chunk.strip() for chunk in content.split("\n\n") if chunk.strip()]
+    print("🔍 Agent 3: Comparator finding gaps (with confidence scores)...")
 
-    for i, chunk in enumerate(chunks):
-        collection.add(
-            documents=[chunk],
-            ids=[f"sop_{i}"]
-        )
-
-    print(f"✅ Loaded {len(chunks)} SOP sections into vector DB")
-    return collection
-
-async def run_comparator(interpreted: dict):
-    print("🔍 Agent 3: Comparator finding gaps...")
-
-    collection = load_sop_into_chroma()
     obligations = interpreted.get("obligations", [])
-    gap_report = []
+    topic = interpreted.get("topic", "")
+    jurisdiction = interpreted.get("jurisdiction", "US")
+    regulation_title = interpreted.get("title", "")
 
-    for obligation in obligations:
-        text = obligation.get("text", "")
-        confidence = obligation.get("confidence", 1.0)
+    # Pull policies from DB
+    policies = get_policies_from_db(topic=topic, jurisdiction=jurisdiction)
+    log_audit(pipeline_run_id, "pulled_policies", f"Found {len(policies)} relevant policies", regulation_title=regulation_title)
 
-        results = collection.query(
-            query_texts=[text],
-            n_results=2
-        )
+    policy_text = "\n\n".join([
+        f"[{p['section']} — {p['title']}]\n{p['content']}"
+        for p in policies
+    ])
 
-        matching_sections = results["documents"][0] if results["documents"] else []
-        distances = results["distances"][0] if results["distances"] else []
+    obligations_text = "\n".join([f"- {o}" for o in obligations])
 
-        if not matching_sections or distances[0] > 1.2:
-            status = "NO_COVERAGE"
-            matched = "No existing policy covers this"
-        elif distances[0] > 0.8:
-            status = "PARTIAL_COVERAGE"
-            matched = matching_sections[0][:100]
-        else:
-            status = "COVERED"
-            matched = matching_sections[0][:100]
+    prompt = f"""You are a compliance gap analyst.
 
-        gap_report.append({
-            "obligation": text,
-            "confidence": confidence,
-            "status": status,
-            "matched_section": matched,
-            "action_needed": status != "COVERED"
-        })
+REGULATION: {regulation_title} ({jurisdiction})
 
-        print(f"  {'✅' if status == 'COVERED' else '⚠️ ' if status == 'PARTIAL_COVERAGE' else '❌'} {status}: {text[:60]}")
+NEW OBLIGATIONS:
+{obligations_text}
 
-    gaps_found = sum(1 for g in gap_report if g["action_needed"])
-    print(f"📊 Comparator done: {gaps_found} gaps found out of {len(obligations)} obligations")
+CURRENT COMPANY POLICIES:
+{policy_text}
 
-    return {
-        "gap_report": gap_report,
-        "title": interpreted.get("title", ""),
-        "url": interpreted.get("url", ""),
-        "summary": interpreted.get("summary", ""),
-        "jurisdiction": interpreted.get("jurisdiction", ""),
-        "deadlines": interpreted.get("deadlines", []),
-        "requires_human_review": interpreted.get("requires_human_review", False)
-    }
+For each obligation, check if our policies cover it. Return a JSON array of gaps only.
+Each gap must have:
+- "gap": what is missing (one sentence)
+- "obligation": the regulation requirement
+- "policy_section": which policy section is affected
+- "confidence_score": float 0.0-1.0 (how confident you are this is a real gap)
+- "confidence_reason": plain English explanation of why this is a gap and your confidence level
+- "suggested_fix": one sentence fix
+
+Return ONLY valid JSON array. No markdown, no explanation outside JSON."""
+
+    response = client.chat.completions.create(
+        model="llama-3.3-70b-versatile",
+        messages=[
+            {"role": "system", "content": "You are a compliance expert. Return only valid JSON."},
+            {"role": "user", "content":
