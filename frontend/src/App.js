@@ -13,7 +13,7 @@ function App() {
 
     try {
       const response = await fetch(
-        `http://127.0.0.1:8000/check-compliance?topic=${encodeURIComponent(topic)}`,
+        `http://192.168.137.155:8000/check-compliance?topic=${encodeURIComponent(topic)}`,
         { method: "POST" }
       );
       const data = await response.json();
