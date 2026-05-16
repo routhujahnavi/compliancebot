@@ -492,6 +492,15 @@ class WebhookPayload(BaseModel):
     source: str
     data: Optional[dict] = {}
 
+async def process_webhook_pipeline():
+    try:
+        from email_alerts import send_pipeline_summary_email
+        results = await run_orchestrator()
+        if results:
+            send_pipeline_summary_email(results)
+    except Exception as e:
+        print(f"Webhook pipeline error: {e}")
+
 @app.post("/webhook")
 async def webhook_trigger(payload: WebhookPayload, db: Session = Depends(get_db)):
     """
@@ -510,7 +519,7 @@ async def webhook_trigger(payload: WebhookPayload, db: Session = Depends(get_db)
     ))
     db.commit()
 
-    asyncio.create_task(run_orchestrator())
+    asyncio.create_task(process_webhook_pipeline())
 
     return {
         "status": "accepted",

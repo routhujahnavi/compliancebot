@@ -28,8 +28,9 @@ def send_human_review_alert(title, reason):
     except Exception as e:
         print(f"❌ Slack alert error: {e}")
 
-async def run_pipeline(document: dict):
-    pipeline_run_id = str(uuid.uuid4())[:8]
+async def run_pipeline(document: dict, pipeline_run_id: str = None):
+    if not pipeline_run_id:
+        pipeline_run_id = str(uuid.uuid4())[:8]
 
     results = {
         "document_title": document.get("title", ""),
@@ -120,11 +121,12 @@ async def run_pipeline(document: dict):
     return results
 
 
-async def run_orchestrator():
+async def run_orchestrator(documents=None, pipeline_run_id=None):
     print("🤖 Agent 5: Orchestrator starting full pipeline...\n")
     print("--- Stage 1: Monitor ---")
 
-    documents = await run_monitor()
+    if documents is None:
+        documents = await run_monitor()
 
     if not documents:
         print("ℹ️  No new documents found.")
@@ -133,7 +135,7 @@ async def run_orchestrator():
     all_results = []
     for doc in documents[:2]:  # Process max 2 docs per run
         print(f"\n🔄 Processing: {doc['title'][:60]}")
-        result = await run_pipeline(doc)
+        result = await run_pipeline(doc, pipeline_run_id=pipeline_run_id)
         all_results.append(result)
 
     print(f"\n🎯 Orchestrator done. Processed {len(all_results)} documents.")
