@@ -26,6 +26,16 @@
 
 It eliminates the manual overhead of compliance tracking while maintaining strict governance through **Human-in-the-Loop (HITL)** workflows and comprehensive audit trails.
 
+### 🌟 Core System Highlights
+* ✅ **The 6-Agent Swarm Pipeline** (Monitor, Interpreter, Comparator, Conflict Detector, Drafter, Orchestrator)
+* ✅ **Human-in-the-Loop (HITL) Dashboard** (For reviewing low-confidence AI decisions)
+* ✅ **Automated SOP Drafting & PDF/Docx Exports**
+* ✅ **Cross-Jurisdictional Conflict Detection** (e.g., EU vs US regulations)
+* ✅ **Jira & Slack Integrations** (For alerting and remediation task creation)
+* ✅ **Event-Driven Webhook Automation** (Instantly reacts to external policy triggers)
+* ✅ **Permanent Audit Trail** (For immutable regulatory tracking and provenance)
+* ✅ **Automated Scheduler** (Cron-based autonomous background scanning)
+
 ---
 
 ## 🧠 The 6-Agent Swarm Architecture
