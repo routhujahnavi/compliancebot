@@ -22,7 +22,7 @@
 
 ## 📑 Overview
 
-**ComplianceBot** is a fully autonomous, agentic AI platform designed to modernize regulatory compliance for modern enterprises. By leveraging a specialized multi-agent architecture, the system continuously monitors global regulatory changes, instantly maps them against internal company policies, detects compliance gaps, and automatically drafts updated Standard Operating Procedures (SOPs).
+**ComplianceBot** is a fully autonomous, agentic AI platform designed to modernize regulatory compliance for enterprises. By leveraging a specialized multi-agent architecture, the system continuously monitors global regulatory changes, instantly maps them against internal company policies, detects compliance gaps, and automatically drafts updated Standard Operating Procedures (SOPs).
 
 It eliminates the manual overhead of compliance tracking while maintaining strict governance through **Human-in-the-Loop (HITL)** workflows and comprehensive audit trails.
 
@@ -30,69 +30,60 @@ It eliminates the manual overhead of compliance tracking while maintaining stric
 
 ## 🌟 Comprehensive Feature List
 
-Here is exactly what ComplianceBot is capable of doing autonomously:
+### 1. Autonomous AI Agent Swarm
+A coordinated team of AI agents that handle the entire compliance lifecycle without human intervention:
+* **Monitor Agent**: Scans government APIs and legal news feeds (via Tavily) to detect new regulatory publications in real-time.
+* **Interpreter Agent**: Uses Llama-3.3-70b to ingest dense legal text and extract structured JSON containing exact obligations, enforcement deadlines, and penalties.
+* **Comparator Agent**: Cross-references newly extracted obligations against the vector-indexed database of existing internal company policies to highlight missing coverage.
+* **Conflict Detector Agent**: Analyzes multi-national policies to identify cross-jurisdictional contradictions (e.g., EU GDPR vs. US SEC laws).
+* **Drafter Agent**: Automatically drafts highly professional, formal policy addendums to remediate identified gaps and exports them to PDF/DOCX.
+* **Orchestrator Agent**: Manages the state machine, triggers external alerts, and coordinates the entire pipeline.
 
-1. **The 6-Agent Swarm Pipeline**: A coordinated team of AI agents (Monitor, Interpreter, Comparator, Conflict Detector, Drafter, Orchestrator) that handle the entire compliance lifecycle from discovery to drafting.
-2. **Automated Regulatory Monitoring**: Scans government APIs and legal news feeds to detect new regulatory publications in real-time.
-3. **Obligation Extraction (Llama-3.3-70b)**: Ingests dense legal text and extracts structured data containing exact obligations, enforcement deadlines, and penalties.
-4. **Internal Policy Gap Analysis**: Instantly cross-references newly extracted obligations against existing internal company policies to highlight missing compliance coverage.
-5. **Cross-Jurisdictional Conflict Detection**: Analyzes multi-national policies to identify contradictions (e.g., EU GDPR's "Right to Erasure" vs. US SEC Data Retention laws).
-6. **Automated SOP Drafting**: Automatically drafts highly professional, formal policy addendums to remediate identified gaps.
-7. **PDF & DOCX Exports**: One-click generation of beautifully formatted, executive-ready Gap Reports and updated SOP documents.
-8. **Human-in-the-Loop (HITL) Governance**: If the AI's confidence drops below 80%, the system pauses automation and queues the item for a human compliance officer to approve, rewrite, or dismiss.
-9. **Event-Driven Webhook Automation**: External systems can send a webhook payload to instantly trigger the pipeline without human intervention.
-10. **Jira Issue Tracking Integration**: Automatically creates Jira tasks for critical compliance gaps, complete with context and deadlines.
-11. **Slack & Email Alerting**: Real-time notifications sent to compliance teams when urgent reviews are needed or gaps are found.
-12. **Permanent Audit Trail**: Every AI decision, confidence score, and branch logic is immutably logged for external auditors.
-13. **Automated Background Scheduler**: Configurable interval-based execution to run compliance checks autonomously on a defined schedule.
+### 2. Human-in-the-Loop (HITL) Governance Workflow
+AI hallucinations are unacceptable in legal compliance. Every decision made by the AI agents is assigned a **Confidence Score**. 
+* If a gap analysis or policy draft scores **below 80%**, the system pauses automation and queues the item in the dashboard.
+* Compliance officers can review the exact context, approve the AI's suggested rewrite, or manually dismiss the flag directly from the UI.
 
----
+### 3. Event-Driven Webhook Automation
+External systems (such as government RSS feeds or legal tech APIs) can send a POST request to the `/webhook` endpoint. This autonomously wakes up the Orchestrator agent to process the new regulation in the background, making the system highly reactive.
 
-## 🧠 The 6-Agent Swarm Architecture Deep Dive
+### 4. Seamless Enterprise Integrations
+* **Jira Tracking:** Automatically creates Jira tasks for critical compliance gaps, complete with deadlines and context.
+* **Slack Alerts:** Real-time notifications for overdue compliance deadlines or critical cross-jurisdiction conflicts.
+* **Automated Email Notifications:** Sends email alerts to the compliance team when Human-in-the-Loop reviews are required.
 
-| Agent | Core Function | Technical Details |
-| :--- | :--- | :--- |
-| 👁️ **Monitor** | **Regulatory Surveillance** | Scans government APIs, federal registers, and legal news feeds (via Tavily) to detect new regulatory publications in real-time. |
-| ⚡ **Interpreter** | **Obligation Extraction** | Uses Llama-3.3-70b to ingest dense legal text and extract structured JSON. |
-| 🔍 **Comparator** | **Gap Analysis** | Cross-references newly extracted obligations against the database of existing internal company policies. |
-| ⚖️ **Conflict Detector** | **Jurisdiction Checking** | Highlights cross-jurisdictional contradictions. |
-| ✍️ **Drafter** | **SOP Generation** | Drafts formal policy addendums and exports to PDF/DOCX. |
-| 🎛️ **Orchestrator** | **System Coordination** | Manages the state machine, triggers Slack alerts, opens Jira remediation tickets, and maintains the audit log. |
+### 5. Automated Scheduling System
+A built-in cron scheduler allows the pipeline to run autonomously at defined intervals (e.g., every 1 hour, 6 hours, or 7 days) without manual intervention, keeping compliance checks running continuously in the background.
 
 ---
 
-## 🔑 API Keys & Environment Variables (For Judges/Reviewers)
+## 💻 Dashboard Elements & UI
 
-To run this project locally, you will need the following API keys. Create a `.env` file in the root directory and add:
+The React frontend provides a comprehensive, beautifully designed control center for compliance officers:
 
-```env
-# AI Models & Agents
-GROQ_API_KEY=your_groq_api_key_here
-TAVILY_API_KEY=your_tavily_api_key_here
+* 🎛️ **Main Dashboard:** Features high-level statistical cards, an animated visual representation of the agent pipeline, and a live-streaming output log to monitor the AI's thought process in real time.
+* 🚨 **Gap Reports Panel:** Displays all identified compliance gaps, complete with the AI's confidence badge, missing policy section, jurisdiction, and remaining days until the enforcement deadline.
+* 👥 **HITL Reviews Tab:** The queue where human reviewers can read AI-suggested policy rewrites and click "Approve & Rewrite" to execute them into the system.
+* ⚔️ **Conflicts Matrix:** A visual mapping of contradictory regulations detected across different countries or jurisdictions.
+* 🛡️ **Policies Database:** A clean, searchable view of all active internal company policies, their version history, and whether they were last updated by a human or the AI agent.
+* 📜 **Audit Trail:** An immutable, database-backed log of every single action taken by the AI. It records timestamps, the agent responsible, the confidence score, and the exact logical branch taken (essential for external auditors).
+* ⏱️ **Scheduler Control:** A dedicated panel to toggle the automated background cron-jobs, test email connectivity, and review the history of past pipeline runs.
+* 📥 **PDF Exporting:** One-click generation of beautifully formatted, executive-ready PDF Gap Reports summarizing all current vulnerabilities and conflicts.
 
-# Integrations (Slack & Jira)
-SLACK_WEBHOOK_URL=your_slack_webhook_here
-JIRA_API_TOKEN=your_jira_token_here
-JIRA_EMAIL=your_jira_email_here
-JIRA_URL=https://your_domain.atlassian.net
-JIRA_PROJECT_KEY=COM
+---
 
-# Email Alerts
-EMAIL_SMTP_HOST=smtp.gmail.com
-EMAIL_SMTP_PORT=587
-EMAIL_FROM=your_email@gmail.com
-EMAIL_PASSWORD=your_app_password
-EMAIL_RECIPIENTS=recipient@gmail.com
+## 🛠️ Technology Stack
 
-# System
-WEBHOOK_SECRET=compliancebot-secret
-```
-
-*(Note to Judges: Please refer to the Devpost submission or private project notes for the live testing credentials, as they have been removed from the public repository for security.)*
+* **Frontend**: React.js, Vanilla CSS (Custom enterprise UI)
+* **Backend**: Python, FastAPI, SQLAlchemy, APScheduler
+* **Database**: SQLite (Robust relational schema for policies, reports, and logs)
+* **AI & LLMs**: Groq API (Llama-3.3-70b-versatile), Tavily API (Search scraping)
 
 ---
 
 ## ⚙️ Local Development Setup
+
+To run ComplianceBot locally on your machine, follow these instructions:
 
 ### 1. Clone the Repository
 ```bash
@@ -109,6 +100,7 @@ source venv/bin/activate  # On Windows: venv\Scripts\activate
 # Install required Python packages
 pip install -r requirements.txt
 
+# Create a .env file based on the required environment variables (API keys)
 # Start the FastAPI backend server
 cd backend
 uvicorn main:app --reload --port 8001
