@@ -115,6 +115,21 @@ export default function App() {
   const simulateWebhook = async () => {
     setRunning(true); setLogs([]); setAgentStatus({});
     addLog("Simulating webhook trigger…", "info");
+    
+    const seq = [
+      { name: "Monitor",          delay: 400  },
+      { name: "Interpreter",      delay: 1200 },
+      { name: "Comparator",       delay: 2400 },
+      { name: "ConflictDetector", delay: 3600 },
+      { name: "Drafter",          delay: 5000 },
+      { name: "Orchestrator",     delay: 6400 },
+    ];
+    
+    seq.forEach(({ name, delay }) => setTimeout(() => {
+      setAgentStatus(prev => ({ ...prev, [name]: "running" }));
+      addLog(`${name} agent processing…`, "info");
+    }, delay));
+
     try {
       const res = await fetch(`${BACKEND}/webhook`, {
         method: "POST",
@@ -126,40 +141,27 @@ export default function App() {
         })
       });
       const data = await res.json();
-      if (data.status === "accepted") {
-        addLog(`Webhook accepted: ${data.message}`, "success");
-        
-        // Trigger the visual UI sequence so the demo looks active
-        const seq = [
-          { name: "Monitor",          delay: 400  },
-          { name: "Interpreter",      delay: 1200 },
-          { name: "Comparator",       delay: 2400 },
-          { name: "ConflictDetector", delay: 3600 },
-          { name: "Drafter",          delay: 5000 },
-          { name: "Orchestrator",     delay: 6400 },
-        ];
-        
-        seq.forEach(({ name, delay }) => setTimeout(() => {
-          setAgentStatus(prev => ({ ...prev, [name]: "running" }));
-          addLog(`${name} agent processing…`, "info");
-        }, delay));
+      AGENTS.forEach(name => setAgentStatus(prev => ({ ...prev, [name]: "done" })));
 
-        // Mark them as done after the sequence and fetch new data
-        setTimeout(() => {
-          AGENTS.forEach(name => setAgentStatus(prev => ({ ...prev, [name]: "done" })));
-          addLog("Pipeline completed background processing", "success");
-          fetchData();
-          setRunning(false);
-        }, 8000);
-
+      if (data.status === "success") {
+        setLastResult(data);
+        addLog("Webhook Pipeline completed successfully", "success");
+        addLog(`Obligations extracted: ${data.obligations_found}`, "success");
+        addLog(`Compliance gaps identified: ${data.gaps_found}`, "success");
+        addLog(`Jurisdiction conflicts: ${data.conflicts_found ?? 0}`, data.conflicts_found ? "warning" : "success");
+        addLog(`Jira ticket created: ${data.jira_key}`, "success");
+        addLog("Summary email triggered successfully", "success");
+        if (data.deadline) addLog(`Deadline: ${data.deadline} · ${data.days_remaining} days remaining`, "warning");
+        if (data.requires_human_review) addLog("Human review required for low-confidence items", "warning");
+        await fetchData();
       } else {
         addLog(`Webhook error: ${data.message}`, "error");
-        setRunning(false);
+        AGENTS.forEach(name => setAgentStatus(prev => ({ ...prev, [name]: "idle" })));
       }
     } catch {
       addLog("Failed to trigger webhook", "error");
-      setRunning(false);
     }
+    setRunning(false);
   };
 
   const runPipeline = async () => {

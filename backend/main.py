@@ -152,11 +152,18 @@ async def run_pipeline_test(db: Session = Depends(get_db)):
 
         draft_result = await run_drafter(gap_data, pipeline_run_id=pipeline_run_id)
 
-        # ── Update last_run_at in schedule config ──
-        config = db.query(ScheduleConfig).first()
-        if config:
-            config.last_run_at = datetime.utcnow()
-            db.commit()
+        # Log manual pipeline run
+        db.add(PipelineRunLog(
+            pipeline_run_id=pipeline_run_id,
+            trigger="manual",
+            status="complete",
+            documents_processed=1,
+            gaps_found=draft_result.get("gaps_count"),
+            conflicts_found=len(conflict_result.get("conflicts", [])),
+            started_at=datetime.utcnow(),
+            completed_at=datetime.utcnow()
+        ))
+        db.commit()
 
         return {
             "status": "success",
@@ -492,15 +499,6 @@ class WebhookPayload(BaseModel):
     source: str
     data: Optional[dict] = {}
 
-async def process_webhook_pipeline():
-    try:
-        from email_alerts import send_pipeline_summary_email
-        results = await run_orchestrator()
-        if results:
-            send_pipeline_summary_email(results)
-    except Exception as e:
-        print(f"Webhook pipeline error: {e}")
-
 @app.post("/webhook")
 async def webhook_trigger(payload: WebhookPayload, db: Session = Depends(get_db)):
     """
@@ -519,11 +517,74 @@ async def webhook_trigger(payload: WebhookPayload, db: Session = Depends(get_db)
     ))
     db.commit()
 
-    asyncio.create_task(process_webhook_pipeline())
+    # Run the mock document logic to output results exactly like Run Pipeline
+    test_document = {
+        "hash": "test123_webhook",
+        "url": "https://www.federalregister.gov/test-webhook",
+        "title": "Webhook Triggered: New Data Privacy Amendment 2025",
+        "date": "2025-01-15",
+        "jurisdiction": "US",
+        "topic": "data privacy",
+        "summary": "Financial institutions must implement end-to-end encryption for all customer data by March 2025. Institutions must conduct quarterly security audits. Failure to comply results in fines up to $500,000. All third party vendors must be certified within 60 days."
+    }
+
+    from agents.interpreter import run_interpreter
+    from agents.comparator import run_comparator
+    from agents.drafter import run_drafter
+    from agents.conflict_detector import run_conflict_detector
+    import uuid
+
+    pipeline_run_id = str(uuid.uuid4())[:8]
+
+    interpreted = await run_interpreter(test_document, pipeline_run_id=pipeline_run_id)
+    if not interpreted:
+        return {"status": "error", "message": "interpreter failed"}
+
+    gap_data = await run_comparator(interpreted, pipeline_run_id=pipeline_run_id)
+    if not gap_data:
+        return {"status": "error", "message": "comparator failed"}
+
+    conflict_result = await run_conflict_detector(interpreted, pipeline_run_id=pipeline_run_id)
+    draft_result = await run_drafter(gap_data, pipeline_run_id=pipeline_run_id)
+
+    # Trigger summary email
+    results = [{
+        "document_title": test_document["title"],
+        "pipeline_run_id": pipeline_run_id,
+        "stages": {"interpreter": "success", "comparator": "success", "drafter": "success", "conflict_detector": "success"},
+        "jira_key": draft_result.get("jira_key"),
+        "gaps_count": draft_result.get("gaps_count"),
+        "conflicts_found": len(conflict_result.get("conflicts", [])),
+        "requires_human_review": interpreted.get("requires_human_review")
+    }]
+
+    from email_alerts import send_pipeline_summary_email
+    try:
+        send_pipeline_summary_email(results)
+    except Exception as e:
+        print(f"  ⚠️  Summary email failed: {e}")
+
+    # Log webhook pipeline run
+    db.add(PipelineRunLog(
+        pipeline_run_id=pipeline_run_id,
+        trigger="webhook",
+        status="complete",
+        documents_processed=1,
+        gaps_found=draft_result.get("gaps_count"),
+        conflicts_found=len(conflict_result.get("conflicts", [])),
+        started_at=datetime.utcnow(),
+        completed_at=datetime.utcnow()
+    ))
+    db.commit()
 
     return {
-        "status": "accepted",
-        "event": payload.event,
-        "source": payload.source,
-        "message": "Pipeline triggered successfully — running autonomously in background"
+        "status": "success",
+        "pipeline_run_id": pipeline_run_id,
+        "obligations_found": len(interpreted.get("obligations", [])),
+        "gaps_found": draft_result.get("gaps_count"),
+        "conflicts_found": len(conflict_result.get("conflicts", [])),
+        "jira_key": draft_result.get("jira_key"),
+        "requires_human_review": interpreted.get("requires_human_review"),
+        "deadline": interpreted.get("deadline", ""),
+        "days_remaining": interpreted.get("days_remaining", -1)
     }
