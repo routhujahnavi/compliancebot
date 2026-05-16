@@ -18,6 +18,7 @@ from scheduler import start_scheduler, stop_scheduler, get_schedule_config, upda
 from email_alerts import send_test_email
 from pydantic import BaseModel
 from typing import Optional
+from datetime import datetime
 
 load_dotenv()
 
@@ -117,7 +118,7 @@ async def pipeline_status():
     }
 
 @app.post("/run-pipeline-test")
-async def run_pipeline_test():
+async def run_pipeline_test(db: Session = Depends(get_db)):
     try:
         test_document = {
             "hash": "test123",
@@ -150,6 +151,12 @@ async def run_pipeline_test():
         conflict_result = await run_conflict_detector(interpreted, pipeline_run_id=pipeline_run_id)
 
         draft_result = await run_drafter(gap_data, pipeline_run_id=pipeline_run_id)
+
+        # ── Update last_run_at in schedule config ──
+        config = db.query(ScheduleConfig).first()
+        if config:
+            config.last_run_at = datetime.utcnow()
+            db.commit()
 
         return {
             "status": "success",
@@ -453,7 +460,7 @@ Keep the language formal and suitable for an official company policy document.""
 
         review.status = "rewritten"
         review.rewritten_content = rewritten
-        review.resolved_at = __import__('datetime').datetime.utcnow()
+        review.resolved_at = datetime.utcnow()
         db.commit()
 
         print(f"  ✅ HITL review {review_id} approved and rewritten")
@@ -474,15 +481,15 @@ def dismiss_hitl_review(review_id: int, db: Session = Depends(get_db)):
         return {"status": "error", "message": f"Review already {review.status}"}
 
     review.status = "dismissed"
-    review.resolved_at = __import__('datetime').datetime.utcnow()
+    review.resolved_at = datetime.utcnow()
     db.commit()
     print(f"  ❌ HITL review {review_id} dismissed")
     return {"status": "success", "review_id": review_id}
 
 # ── Webhook Trigger ──────────────────────────────────────────────────
 class WebhookPayload(BaseModel):
-    event: str        # e.g. "regulation.updated", "policy.changed"
-    source: str       # e.g. "federal-register", "github", "zapier"
+    event: str
+    source: str
     data: Optional[dict] = {}
 
 @app.post("/webhook")
@@ -493,7 +500,6 @@ async def webhook_trigger(payload: WebhookPayload, db: Session = Depends(get_db)
     """
     print(f"🔔 Webhook received: {payload.event} from {payload.source}")
 
-    # Log webhook event to audit trail
     db.add(AuditTrail(
         pipeline_run_id="webhook",
         agent_name="Webhook",
@@ -504,7 +510,6 @@ async def webhook_trigger(payload: WebhookPayload, db: Session = Depends(get_db)
     ))
     db.commit()
 
-    # Fire pipeline asynchronously — non-blocking
     asyncio.create_task(run_orchestrator())
 
     return {
